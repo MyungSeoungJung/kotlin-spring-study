@@ -49,6 +49,9 @@ dependencies {
 //	spring transaction호환 , @Transaction
 	implementation("org.jetbrains.exposed:exposed-spring-boot-starter:$exposedVersion")
 
+
+	implementation("com.auth0:java-jwt:4.4.0")
+	implementation("at.favre.lib:bcrypt:0.10.2")
 }
 
 tasks.withType<KotlinCompile> {
