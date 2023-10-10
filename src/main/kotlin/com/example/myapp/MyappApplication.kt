@@ -22,10 +22,11 @@ fun main(args: Array<String>) {
 @RequestMapping("/test")
 class TestController {
 
-	@GetMapping("/test")
-	fun test() : String{
+	@GetMapping
+	fun test() : String {
 		val durationArr = arrayOf<Long>(200, 100, 300, 200, 400)
 		val ids = Array(5){""};
+
 		val start = LocalDateTime.now()
 		println(start.toString())
 		for(i in 1..durationArr.size) {
@@ -34,20 +35,22 @@ class TestController {
 		}
 		val end = LocalDateTime.now()
 		println(end.toString())
+
 		return """
-    |All tasks are ended: ${ids.joinToString { it.toString() }}
-    |Elapsed time: ${Duration.between(start, end).toMillis()}
-    |Current Thread: ${Thread.currentThread().name}
-""".trimMargin()
-		return ""
+			|All tasks are ended: ${ids.joinToString { it.toString() }}
+			|Elapsed time: ${Duration.between(start, end).toMillis()}
+			|Current Thread: ${Thread.currentThread().name}
+		""".trimMargin()
 	}
 
 	@GetMapping("/coroutine")
-	fun testCoroutine() : String{
+	fun testCoroutine() : String {
 		val durationArr = arrayOf<Long>(200, 100, 300, 200, 400)
 		val ids = Array(5){""};
+
 		val start = LocalDateTime.now()
 		println(start.toString())
+
 		runBlocking {
 			for(i in 1..durationArr.size) {
 				launch {
@@ -56,13 +59,14 @@ class TestController {
 				}
 			}
 		}
+
 		val end = LocalDateTime.now()
 		println(end.toString())
+
 		return """
-    |All tasks are ended: ${ids.joinToString { it.toString() }}
-    |Elapsed time: ${Duration.between(start, end).toMillis()}
-    |Current Thread: ${Thread.currentThread().name}
-""".trimMargin()
-		return ""
+			|All tasks are ended: ${ids.joinToString { it.toString() }}
+			|Elapsed time: ${Duration.between(start, end).toMillis()}
+			|Current Thread: ${Thread.currentThread().name}
+		""".trimMargin()
 	}
 }

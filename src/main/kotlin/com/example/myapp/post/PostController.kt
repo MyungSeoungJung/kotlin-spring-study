@@ -3,14 +3,18 @@ package com.example.myapp.post
 import com.example.myapp.auth.Auth
 import com.example.myapp.auth.AuthProfile
 import com.example.myapp.auth.Profiles
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.like
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.springframework.core.io.ResourceLoader
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.PageRequest
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
@@ -22,23 +26,50 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.multipart.MultipartFile
+import java.nio.file.CopyOption
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.sql.Connection
+import java.time.Duration
 import java.time.LocalDateTime
+import java.util.*
 
 @RestController
 @RequestMapping("posts")
-class PostController {
+class PostController(private val resourceLoader: ResourceLoader) {
+    private val POST_FILE_PATH = "files/post";
 
     // exposed selectAll -> List<ResultRow>
     // ResultRow는 transaction {} 구문 밖에서 접근 불가능함
     // transaction 구분 외부로 보낼 때는 별도의 객체로 변환해서 내보낸다.
     // 결과값: List<PostResponse>
     @GetMapping
-    fun fetch() = transaction {
-        Posts.selectAll().map { r -> PostResponse(
-            r[Posts.id], r[Posts.title], r[Posts.content],
-            r[Posts.createdDate].toString())
+    fun fetchAllPosts() = transaction {
+        val postResponses = Posts.selectAll().map { r ->
+            val postId = r[Posts.id]
+            val postFiles = PostFiles.select { PostFiles.postId eq postId }.map { fileRow ->
+                PostFileResponse(
+                    id = fileRow[PostFiles.id].value,
+                    postId = postId,
+                    uuidFileName = fileRow[PostFiles.uuidFileName],
+                    originalFileName = fileRow[PostFiles.originalFileName],
+                    contentType = fileRow[PostFiles.contentType]
+                )
+            }
+
+            PostWithFileResponse(
+                id = postId,
+                title = r[Posts.title],
+                content = r[Posts.content],
+                createdDate = r[Posts.createdDate].toString(),
+                files = postFiles
+            )
         }
+
+        return@transaction ResponseEntity.ok(postResponses)
     }
 
     @GetMapping("/paging")
@@ -114,7 +145,6 @@ class PostController {
         // Page 객체로 리턴
         PageImpl(content, PageRequest.of(page, size),  totalCount)
     }
-
 
     @GetMapping("/commentCount")
     fun fetchCommentCount(@RequestParam size : Int, @RequestParam page : Int,
@@ -258,6 +288,7 @@ class PostController {
             .body(mapOf("data" to response, "error" to "conflict"))
     }
 
+
     @Auth
     @DeleteMapping("/{id}")
     fun remove(@PathVariable id : Long,
@@ -324,4 +355,199 @@ class PostController {
 
         return ResponseEntity.ok().build();
     }
+
+
+
+    // POST /posts/with-file
+    // content-type: multipart/form-data
+    // body: files=[...octet-stream]
+    //       title=제목입니다.&content=내용입니다.
+    @PostMapping("/with-file")
+    fun createWithFile(@RequestParam files: Array<MultipartFile>,
+                       @RequestParam title: String,
+                       @RequestParam content: String) : ResponseEntity<PostWithFileResponse> {
+        println("title: $title")
+        println("content: $content")
+
+       
+        //private val POST_FILE_PATH = "files/post";
+        val dirPath = Paths.get(POST_FILE_PATH)  // files/post로 디렉터리 디렉션 지정
+        if (!Files.exists(dirPath)) {   //해당 경로 존재하는 지 확인 후 없으면 디렉터리 생성
+//            없으면 폴더 생성
+            Files.createDirectories(dirPath)
+        }
+
+//      mutableListOf = 변경 가능한 리스트 생성하는 함수, 리스트의 요소를 추가,수정 삭제할 수 있는 리스트
+        val filesList = mutableListOf<Map<String, String?>>()
+
+        //RunBlocking=  비동기 코드를 동기적으로 실행하기 위한 코루틴빌더 중 하나, 코루틴을 생성하고 실행하는 함수.
+        runBlocking {
+            // files.forEach로 파일들을 반복하면서, 각 파일에 대해 launch를 사용하여 병렬로 코루틴을 실행
+            files.forEach {
+                launch {
+                    //프론트에서 서버로 파일을 전송할때 각 파일의 정보는 originalFilename,uuidFileName,contentType을 프로퍼티로 가지고 있음.
+                    println("filename: ${it.originalFilename}")  //it은 참조하는 객체를 가리킴 지금에서는 매개변수를 받는 file을 참조함
+                    // files/post/1.png
+                    // 339993-392039-a9d9d9-d9d9d9d.png
+
+                    val uuidFileName =
+                        // 파일명
+                        buildString { // 문자열을 구성하기 위한 함수, +의 성능 문제를 해결하고자 고안됨 쉽게 문자열 합치기
+                            append(UUID.randomUUID().toString()) // UUID: 랜덤하게 문자열로 id값을 만들 수 있는 방법(순서X), ex : 550e8400-e29b-41d4-a716-446655440000
+                            append(".") // . 추가
+                            append(it.originalFilename!!.split(".").last())  //23fwe-13lfaw-324.jpg = .이후의 확장자명 가져오기 (.jpg , mp4 이 부분 잘라오기)
+//                            
+                        }
+
+//                  프론트에서 서버로 요청을 보낼때 http://localhost:8080/posts/files/uuidFileName 엔드포인트로 요청
+//                    inputStream은 프론트엔드에서 서버로 보낸 데이터를 사용하는데 사용
+                    val filePath = dirPath.resolve(uuidFileName)
+                    // 파일객체에서 스트림객체를 얻어옴
+                    // 스트림객체: 바이트배열 처리할 수 있는 객체
+//                  use 함수를 사용하면 스트림을 열고 작업을 수행한 후 자동으로 스트림을 닫아줌.
+                    it.inputStream.use {  //it.inputStream은 @RequestParam files을 참조
+                        // filePath에 파일 저장, StandardCopyOption.REPLACE_EXISTING = 해당 경로에 동일한 파일 존재하면 덮어쓰기
+                        Files.copy(it, filePath, StandardCopyOption.REPLACE_EXISTING)
+                    }
+                    // 메타데이터 = 파일의 내용 + 파일의 정보를 포함, 파일의 크기,생성일,수정,저자,암호화여부 등
+                    // 파일의 메타데이터를 리스트-맵에 임시저장
+                    filesList.add(mapOf("uuidFileName" to uuidFileName,
+                        "contentType" to it.contentType,
+                        "originalFileName" to it.originalFilename))
+                }
+            }
+        }
+
+
+        // 데이터베이스에 파일정보와 데이터를 저장하고
+        // post insert, post_file insert batch
+        val result = transaction {
+            val p = Posts
+            val pf = PostFiles
+
+
+            // 포스트 1건 저장
+            val insertedPost = p.insert {
+                it[this.title] = title
+                it[this.content] = content
+                it[this.profileId] = 1 // 강제로 1번 유저로
+                it[this.createdDate] = LocalDateTime.now()
+            }.resultedValues!!.first()
+
+            // inser into ... values(..), (..), (..);
+            // 참고로 batchInsert를하면 db 설정 상관없이 Expose 로그에는 insert구문이 여러개생김
+            // 실제 작동은 batch insert로 처리됨
+            // https://github.com/JetBrains/Exposed/wiki/DSL#batch-insert
+            pf.batchInsert(filesList) {
+                this[pf.postId] = insertedPost[p.id] // 외래키값 넣어줌
+                this[pf.contentType] = it["contentType"] as String
+                this[pf.originalFileName] = it["originalFileName"] as String
+                this[pf.uuidFileName] = it["uuidFileName"] as String
+            }
+
+            // insert한 파일 목록을 post id로 조회
+            val insertedPostFiles = pf.select { pf.postId eq insertedPost[p.id] }.map {r ->
+                PostFileResponse(
+                    id = r[pf.id].value,
+                    postId = insertedPost[p.id],
+                    uuidFileName = r[pf.uuidFileName],
+                    originalFileName = r[pf.originalFileName],
+                    contentType = r[pf.contentType]
+                )
+            }
+
+            return@transaction PostWithFileResponse(
+                id = insertedPost[p.id],
+                title = insertedPost[p.title],
+                content = insertedPost[p.content],
+                createdDate = insertedPost[p.createdDate].toString(),
+                files = insertedPostFiles
+            )
+        }
+
+        // 응답
+        return ResponseEntity.status(HttpStatus.CREATED).body(result);
+    }
+
+
+    @GetMapping("/paging/search/with-files")
+    fun searchPagingWithFile(@RequestParam size : Int, @RequestParam page : Int, @RequestParam keyword : String?) : Page<PostWithFileResponse>
+
+            = transaction(Connection.TRANSACTION_READ_UNCOMMITTED, readOnly = true) {
+        // 검색 조건 생성
+        val query = when {
+            keyword != null -> Posts.select {
+                (Posts.title like "%${keyword}%") or
+                        (Posts.content like "%${keyword}%" ) }
+            else -> Posts.selectAll()
+
+        }
+
+        // 전체 결과 카운트
+        val totalCount = query.count()
+        println("------------------------------")
+        println(size)
+        println(page)
+        println(keyword)
+
+        // 페이징 조회
+        val postsResponse = query
+            .orderBy(Posts.id to SortOrder.DESC)
+            .limit(size, offset= (size * page).toLong())
+            .map { r ->
+                PostResponse(r[Posts.id],
+                    r[Posts.title],
+                    r[Posts.content], r[Posts.createdDate].toString())
+            }
+
+        val pf = PostFiles;
+        // select * from post_file where post_id in (1,2,4,5,6....)
+        val postFilesResponse = pf.select { pf.postId inList postsResponse.map { it.id }.toList() }.map {r ->
+            PostFileResponse(
+                id = r[pf.id].value,
+                postId = r[pf.postId],
+                uuidFileName = r[pf.uuidFileName],
+                originalFileName = r[pf.originalFileName],
+                contentType = r[pf.contentType]
+            )
+        }
+
+        // 파일목록까지 포함된 리스트로 변환
+        val postWithFileResponse = postsResponse.map { p ->
+            PostWithFileResponse(
+                id=p.id,
+                title=p.title,
+                content=p.content,
+                createdDate = p.createdDate,
+                // 각 포스트별 id가 매칭되는 파일만 필터
+                files=postFilesResponse.filter { f -> f.postId == p.id }
+            )
+        }
+
+        // Page 객체로 리턴
+        PageImpl(postWithFileResponse, PageRequest.of(page, size),  totalCount)
+    }
+
+    // GET /posts/files/0bbbd06e-cd34-461e-8f65-9c5587e54260.mp4
+    // Content-Type: video/mp4
+    @GetMapping("/files/{uuidFilename}")
+    fun downloadFile(@PathVariable uuidFilename : String) : ResponseEntity<Any> {
+        // 서버에서 해당 경로의 파일을 읽어오기
+        val file = Paths.get("$POST_FILE_PATH/$uuidFilename").toFile()
+        // 파일이 없으면 not-found
+        if (!file.exists()) {
+            return ResponseEntity.notFound().build()
+        }
+
+        // 파일의 content-type 처리
+        val mimeType = Files.probeContentType(file.toPath())
+        val mediaType = MediaType.parseMediaType(mimeType)
+
+        // file:files/post/dkdkdkd.png
+        val resource = resourceLoader.getResource("file:$file")
+        return ResponseEntity.ok()
+            .contentType(mediaType) // video/mp4, image/png, image/jpeg
+            .body(resource)
+    }
+
 }

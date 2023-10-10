@@ -25,6 +25,7 @@ class AuthController(private val service: AuthService) {
         // 2. Buisness Logic(데이터 처리)
         // profile, login 생성 트랜잭션 처리
         val profileId = service.createIdentity(req)
+
         if(profileId > 0) {
             // 3. Response
             // 201: created
@@ -57,6 +58,7 @@ class AuthController(private val service: AuthService) {
         println(password)
 
         val (result, message) = service.authenticate(username, password)
+
         if(result) {
             // 3. cookie와 헤더를 생성한후 리다이렉트
             val cookie = Cookie("token", message)

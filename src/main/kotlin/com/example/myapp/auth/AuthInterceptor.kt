@@ -28,10 +28,10 @@ class AuthInterceptor : HandlerInterceptor {
             // 2. 인증토큰 읽어오기
             // @Auth 어노테이션이 있는 경우
             // Request Header에 authorization 헤더에 토큰을 조회
-            val token: String = request.getHeader("Authorization")
+            val token: String? = request.getHeader("Authorization")
             println(token)
             // 인증 토큰이 없으면
-            if (token.isEmpty()) {
+            if (token.isNullOrEmpty()) {
                 // 401: Unauthorized(미인가인데, 미인증이라는 의미로 사용)
                 // 인증토큰이 없음
                 response.status = 401
